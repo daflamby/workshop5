@@ -2,6 +2,26 @@ import bodyParser from "body-parser";
 import express from "express";
 import { BASE_NODE_PORT } from "../config";
 import { Value } from "../types";
+import fetch from "node-fetch";
+
+async function sendMessage(targetNodeId: number, value: Value) {
+  const targetPort = BASE_NODE_PORT + targetNodeId;
+  const url = `http://localhost:${targetPort}/message`;
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ senderId: nodeId, value }),
+    });
+
+    if (!response.ok) {
+      console.error(`Failed to send message to node ${targetNodeId}`);
+    }
+  } catch (error) {
+    console.error(`Error sending message to node ${targetNodeId}:`, error);
+  }
+}
 
 type NodeState = {
   killed: boolean;
