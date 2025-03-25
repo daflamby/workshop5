@@ -71,12 +71,14 @@ export async function node(
       if (votes[0] >= N - F) {
         currentState.x = 0;
         currentState.decided = true;
-      } else if (votes[1] >= N - F) {
+    } else if (votes[1] >= N - F) {
         currentState.x = 1;
         currentState.decided = true;
-      } else {
-        currentState.x = "?";
-      }
+    } else {
+        currentState.x = "?";  // Retry if no clear majority
+        currentState.decided = false;  // Ensure it's explicitly set to false in case of retry
+    }
+
     }
 
     return res.status(200).send("Message received");
