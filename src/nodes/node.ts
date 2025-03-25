@@ -48,43 +48,45 @@ export async function node(
 
   // POST /message - Handle messages from other nodes
   node.post("/message", (req, res) => {
-    if (currentState.killed) {
-      return res.status(400).send("Node is stopped");
+  if (currentState.killed) {
+    return res.status(400).send("Node is stopped");
+  }
+
+  const { senderId, value } = req.body;
+
+  if (senderId === nodeId) {
+    return res.status(400).send("Node cannot send messages to itself");
+  }
+
+  // Store the message from the sender
+  currentState.messages[senderId] = value;
+
+  // After receiving the message, check if enough messages are collected
+  if (Object.keys(currentState.messages).length >= N - F) {
+    // Start the decision-making process
+    let votes = { 0: 0, 1: 0 };
+
+    // Count the votes for each value
+    Object.values(currentState.messages).forEach((v) => {
+      if (v === 0) votes[0]++;
+      if (v === 1) votes[1]++;
+    });
+
+    // If we have a majority, decide the value
+    if (votes[0] >= N - F) {
+      currentState.x = 0;
+      currentState.decided = true;
+    } else if (votes[1] >= N - F) {
+      currentState.x = 1;
+      currentState.decided = true;
+    } else {
+      currentState.x = "?";  // Unclear consensus, retry
+      currentState.decided = false;  // Not yet decided
     }
+  }
 
-    const { senderId, value } = req.body;
-
-    if (senderId === nodeId) {
-      return res.status(400).send("Node cannot send messages to itself");
-    }
-
-    currentState.messages[senderId] = value;
-
-    // After receiving the message, check if enough messages are collected
-    if (Object.keys(currentState.messages).length >= N - F) {
-      // Start the decision-making process
-      let votes = { 0: 0, 1: 0 };
-
-      // Count the votes for each value
-      Object.values(currentState.messages).forEach((v) => {
-        if (v === 0) votes[0]++;
-        if (v === 1) votes[1]++;
-      });
-
-      // If we have a majority, decide the value
-      if (votes[0] >= N - F) {
-        currentState.x = 0;
-        currentState.decided = true;
-      } else if (votes[1] >= N - F) {
-        currentState.x = 1;
-        currentState.decided = true;
-      } else {
-        currentState.x = "?";  // Unclear consensus, retry
-      }
-    }
-
-    return res.status(200).send("Message received");
-  });
+  return res.status(200).send("Message received");
+});
 
   // GET /start - Start the consensus algorithm
   node.get("/start", async (req, res) => {
