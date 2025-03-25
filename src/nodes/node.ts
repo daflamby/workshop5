@@ -1,6 +1,5 @@
 import bodyParser from "body-parser";
 import express from "express";
-import fetch from "node-fetch";
 import { BASE_NODE_PORT } from "../config";
 import { Value } from "../types";
 
