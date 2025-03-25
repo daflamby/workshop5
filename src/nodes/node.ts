@@ -83,7 +83,7 @@ export async function node(
       }
     }
 
-    res.status(200).send("Message received");
+    return res.status(200).send("Message received");
   });
 
   // GET /start - Start the consensus algorithm
@@ -106,14 +106,14 @@ export async function node(
       }
     }
 
-    res.status(200).send("Consensus started");
+    return res.status(200).send("Consensus started");
   });
 
   // GET /stop - Stop the consensus algorithm
   node.get("/stop", async (req, res) => {
     console.log(`Node ${nodeId} stopping consensus algorithm.`);
     currentState.killed = true;
-    res.status(200).send("Consensus stopped");
+    return res.status(200).send("Consensus stopped");
   });
 
   // Start the server
@@ -124,3 +124,5 @@ export async function node(
 
   return server;
 }
+
+
