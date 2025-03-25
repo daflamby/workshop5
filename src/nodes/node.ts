@@ -2,6 +2,7 @@ import bodyParser from "body-parser";
 import express from "express";
 import { BASE_NODE_PORT } from "../config";
 import { Value } from "../types";
+const fetch = require("node-fetch");  // Import fetch for HTTP requests
 
 type NodeState = {
   killed: boolean;
@@ -10,6 +11,26 @@ type NodeState = {
   k: number | null;
   messages: { [key: number]: Value };  // Store messages from other nodes
 };
+
+async function sendMessage(nodeId: number, value: Value) {
+  const url = `http://localhost:${BASE_NODE_PORT + nodeId}/message`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ senderId: nodeId, value }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to send message to node ${nodeId}`);
+    }
+
+    console.log(`Message sent to node ${nodeId} with value ${value}`);
+  } catch (error) {
+    console.error(`Error sending message to node ${nodeId}:`, error);
+  }
+}
 
 export async function node(
   nodeId: number,
@@ -101,9 +122,7 @@ export async function node(
     for (let i = 0; i < N; i++) {
       if (i !== nodeId) {
         // Simulate sending the initial value to other nodes
-        // This would typically be an HTTP POST to the /message route of other nodes
-        // For now, simulate the message passing
-        // await sendMessage(i, initialValue);  // Use a function to handle the actual sending of message
+        await sendMessage(i, initialValue);  // Use the function to handle sending message
       }
     }
 
