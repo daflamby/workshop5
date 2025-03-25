@@ -1,7 +1,5 @@
 import bodyParser from "body-parser";
 import express from "express";
-const fetch = require("node-fetch");
-
 import { BASE_NODE_PORT } from "../config";
 import { Value } from "../types";
 
@@ -10,101 +8,116 @@ type NodeState = {
   x: 0 | 1 | "?" | null;
   decided: boolean | null;
   k: number | null;
-  messages: { [key: number]: Value };
+  messages: { [key: number]: Value };  // Store messages from other nodes
 };
 
 export async function node(
   nodeId: number,
-  N: number,
-  F: number,
-  initialValue: Value,
-  isFaulty: boolean,
-  nodesAreReady: () => boolean,
-  setNodeIsReady: (index: number) => void
+  N: number,  // Total number of nodes in the network
+  F: number,  // Number of faulty nodes in the network
+  initialValue: Value,  // Initial value of the node
+  isFaulty: boolean,  // Whether this node is faulty
+  nodesAreReady: () => boolean,  // Check if all nodes are ready
+  setNodeIsReady: (index: number) => void  // Mark the node as ready
 ) {
   const node = express();
   node.use(express.json());
   node.use(bodyParser.json());
 
+  // Node state initialization
   let currentState: NodeState = {
     killed: false,
     x: initialValue,
     decided: null,
-    k: 0,
+    k: 0,  // Step 0 at the start
     messages: {},
   };
 
-  // Function to send a message to another node
-  async function sendMessage(receiverId: number, value: Value) {
-    try {
-      await fetch(`http://localhost:${BASE_NODE_PORT + receiverId}/message`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ senderId: nodeId, value }),
-      });
-    } catch (error) {
-      console.error(`Error sending message to node ${receiverId}:`, error);
-    }
-  }
-
+  // GET /status - Check if node is faulty or live
   node.get("/status", (req, res) => {
-    return res.status(isFaulty ? 500 : 200).send(isFaulty ? "faulty" : "live");
+    if (isFaulty) {
+      return res.status(500).send("faulty");
+    }
+    return res.status(200).send("live");
   });
 
-  node.get("/getState", (req, res) => res.json(currentState));
+  // GET /getState - Retrieve the current node state
+  node.get("/getState", (req, res) => {
+    res.json(currentState);
+  });
 
+  // POST /message - Handle messages from other nodes
   node.post("/message", (req, res) => {
-    if (currentState.killed) return res.status(400).send("Node is stopped");
+    if (currentState.killed) {
+      return res.status(400).send("Node is stopped");
+    }
 
     const { senderId, value } = req.body;
-    if (senderId === nodeId) return res.status(400).send("Self-message not allowed");
+
+    if (senderId === nodeId) {
+      return res.status(400).send("Node cannot send messages to itself");
+    }
 
     currentState.messages[senderId] = value;
 
+    // After receiving the message, check if enough messages are collected
     if (Object.keys(currentState.messages).length >= N - F) {
+      // Start the decision-making process
       let votes = { 0: 0, 1: 0 };
-      Object.values(currentState.messages).forEach(v => {
+
+      // Count the votes for each value
+      Object.values(currentState.messages).forEach((v) => {
         if (v === 0) votes[0]++;
         if (v === 1) votes[1]++;
       });
 
+      // If we have a majority, decide the value
       if (votes[0] >= N - F) {
         currentState.x = 0;
         currentState.decided = true;
-    } else if (votes[1] >= N - F) {
+      } else if (votes[1] >= N - F) {
         currentState.x = 1;
         currentState.decided = true;
-    } else {
-        currentState.x = "?";  // Retry if no clear majority
-        currentState.decided = false;  // Ensure it's explicitly set to false in case of retry
-    }
-
+      } else {
+        currentState.x = "?";  // Unclear consensus, retry
+        currentState.decided = false;  // Explicitly set to false if undecided
+      }
     }
 
     return res.status(200).send("Message received");
   });
 
+  // GET /start - Start the consensus algorithm
   node.get("/start", async (req, res) => {
-    if (currentState.killed) return res.status(400).send("Node is stopped");
+    if (currentState.killed) {
+      return res.status(400).send("Node is stopped");
+    }
 
-    console.log(`Node ${nodeId} starting consensus.`);
-    currentState.k = 1;
+    // Initialize the consensus step (k)
+    console.log(`Node ${nodeId} starting consensus algorithm.`);
+    currentState.k = 1;  // Start consensus from step 1
 
+    // Broadcast the initial value to all other nodes
     for (let i = 0; i < N; i++) {
       if (i !== nodeId) {
-        await sendMessage(i, initialValue);
+        // Simulate sending the initial value to other nodes
+        // This would typically be an HTTP POST to the /message route of other nodes
+        // For now, simulate the message passing
+        // await sendMessage(i, initialValue);  // Use a function to handle the actual sending of message
       }
     }
 
     return res.status(200).send("Consensus started");
   });
 
+  // GET /stop - Stop the consensus algorithm
   node.get("/stop", async (req, res) => {
-    console.log(`Node ${nodeId} stopping.`);
+    console.log(`Node ${nodeId} stopping consensus algorithm.`);
     currentState.killed = true;
     return res.status(200).send("Consensus stopped");
   });
 
+  // Start the server
   const server = node.listen(BASE_NODE_PORT + nodeId, async () => {
     console.log(`Node ${nodeId} is listening on port ${BASE_NODE_PORT + nodeId}`);
     setNodeIsReady(nodeId);
