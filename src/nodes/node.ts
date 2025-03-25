@@ -1,202 +1,126 @@
 import bodyParser from "body-parser";
 import express from "express";
-import {BASE_NODE_PORT} from "../config";
-import {Value, NodeState} from "../types";
-import {delay} from "../utils";
-import * as console from "console";
+import { BASE_NODE_PORT } from "../config";
+import { Value } from "../types";
 
-export async function sendmessage(message: any,x: any,k: any,N: number){
-  for (let i = 0; i < N; i++) {
-    fetch(`http://localhost:${BASE_NODE_PORT + i}/message`, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-            x: x,
-            k: k,
-            message: message
-        })
-    });
-}
-}
+type NodeState = {
+  killed: boolean;
+  x: 0 | 1 | "?" | null;
+  decided: boolean | null;
+  k: number | null;
+  messages: { [key: number]: Value };  // Store messages from other nodes
+};
 
 export async function node(
-    nodeId: number, // the ID of the node
-    N: number, // total number of nodes in the network
-    F: number, // number of faulty nodes in the network
-    initialValue: Value, // initial value of the node
-    isFaulty: boolean, // true if the node is faulty, false otherwise
-    nodesAreReady: () => boolean, // used to know if all nodes are ready to receive requests
-    setNodeIsReady: (index: number) => void // this should be called when the node is started and ready to receive requests
+  nodeId: number,
+  N: number,  // Total number of nodes in the network
+  F: number,  // Number of faulty nodes in the network
+  initialValue: Value,  // Initial value of the node
+  isFaulty: boolean,  // Whether this node is faulty
+  nodesAreReady: () => boolean,  // Check if all nodes are ready
+  setNodeIsReady: (index: number) => void  // Mark the node as ready
 ) {
-    const node = express();
-    node.use(express.json());
-    node.use(bodyParser.json());
+  const node = express();
+  node.use(express.json());
+  node.use(bodyParser.json());
 
-    let nodeState: NodeState = {
-      killed: isFaulty,
-      x: isFaulty ? null : initialValue,
-      decided: isFaulty ? null : false,
-      k: isFaulty ? null : 0,
-      receivedValues: null
-    };
+  // Node state initialization
+  let currentState: NodeState = {
+    killed: false,
+    x: initialValue,
+    decided: null,
+    k: 0,  // Step 0 at the start
+    messages: {},
+  };
 
-    let proposals: Map<number, Value[]> = new Map();
-    let votes: Map<number, Value[]> = new Map();
+  // GET /status - Check if node is faulty or live
+  node.get("/status", (req, res) => {
+    if (isFaulty) {
+      return res.status(500).send("faulty");
+    }
+    return res.status(200).send("live");
+  });
 
-    // Route to get the status of the node
-    node.get("/status", (req, res) => {
-        if (nodeState.killed) {
-            res.status(500).send("faulty");
-        } else {
-            res.status(200).send("live");
-        }
-    });
+  // GET /getState - Retrieve the current node state
+  node.get("/getState", (req, res) => {
+    res.json(currentState);
+  });
 
-    // TODO implement this
-    // this route allows the node to receive messages from other nodes
-    node.post("/message", (req, res) => {
-        let {k, x, message} = req.body;
-        if (!nodeState.killed) {
-            if (message === "Phase 1") {
-                if (!proposals.has(k)) {
-                    proposals.set(k, []);
-                }
-                proposals.get(k)!.push(x);
+  // POST /message - Handle messages from other nodes
+  node.post("/message", (req, res) => {
+    if (currentState.killed) {
+      return res.status(400).send("Node is stopped");
+    }
 
-                if (proposals.get(k)!?.length >= (N - F)) {
-                    let values = proposals.get(k)!;
-                    let count0 = 0;
-                    let count1 = 0;
-                    for (let i = 0; i < values.length; i++) {
-                        if (values[i] === 0) {
-                            count0++;
-                        } else if (values[i] === 1) {
-                            count1++;
-                        }
-                    }
-                    if (count0 > count1) {
-                        x = 0;
-                    } else if (count1 > count0) {
-                        x = 1;
-                    } else {
-                        x = "?";
-                    }
+    const { senderId, value } = req.body;
 
-                    console.log(`Node ${nodeId} decided on value ${x} for k = ${k}`)
-                    sendmessage("Phase 2",x,k,N);
-                    
+    if (senderId === nodeId) {
+      return res.status(400).send("Node cannot send messages to itself");
+    }
 
-                }
-            } else if (message === "Phase 2") {
-                if (!votes.has(k)) {
-                    votes.set(k, []);
-                }
-                votes.get(k)!.push(x);
-                if (votes.get(k)!?.length >= (N - F)) {
-                    let values = votes.get(k)!;
-                    let count0 = 0;
-                    let count1 = 0;
-                    for (let i = 0; i < values.length; i++) {
-                        if (values[i] === 0) {
-                            count0++;
-                        } else if (values[i] === 1) {
-                            count1++;
-                        }
-                    }
-                    if (count0 > F) {
-                        nodeState.x = 0;
-                        nodeState.decided = true;
-                    } else if (count1 > F) {
-                        nodeState.x = 1;
-                        nodeState.decided = true;
-                    } else {
-                        if (count0 + count1 > 0 && count0 > count1) {
-                            nodeState.x = 0;
-                        } else if (count0 + count1 > 0 && count0 < count1) {
-                            nodeState.x = 1;
-                        } else {
-                            nodeState.x = Math.random() > 0.5 ? 0 : 1;
-                        }
-                    }
-                    delay(200)
+    currentState.messages[senderId] = value;
 
-                    //TODO call all getState of nodes and check if all are decided
-                    // if yes, call all stop route of nodes
+    // After receiving the message, check if enough messages are collected
+    if (Object.keys(currentState.messages).length >= N - F) {
+      // Start the decision-making process
+      let votes = { 0: 0, 1: 0 };
 
-                    let allDecided = true;
-                    for (let i = 0; i < N; i++) {
-                        // Call getState of each node
-                        fetch(`http://localhost:${BASE_NODE_PORT + i}/getState`, {
-                            method: 'GET',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                        }).then(response => response.json())
-                            .then(data => {
-                                // @ts-ignore
-                                if (!data.decided) {
-                                    allDecided = false;
-                                }
-                                // If this is the last node and all have decided, stop all nodes
-                                if (i === N - 1 && allDecided) {
-                                    for (let j = 0; j < N; j++) {
-                                        fetch(`http://localhost:${BASE_NODE_PORT + j}/stop`, {
-                                            method: 'GET',
-                                            headers: {
-                                                'Content-Type': 'application/json',
-                                            },
-                                        });
-                                    }
-                                }
-                            });
-                    }
+      // Count the votes for each value
+      Object.values(currentState.messages).forEach((v) => {
+        if (v === 0) votes[0]++;
+        if (v === 1) votes[1]++;
+      });
 
-                    nodeState.k = k + 1;
-                    sendmessage("Phase 1",nodeState.x,nodeState.k,N);
-                    
-                }
+      // If we have a majority, decide the value
+      if (votes[0] >= N - F) {
+        currentState.x = 0;
+        currentState.decided = true;
+      } else if (votes[1] >= N - F) {
+        currentState.x = 1;
+        currentState.decided = true;
+      } else {
+        currentState.x = "?";  // Unclear consensus, retry
+      }
+    }
 
-            }
-            res.status(200).json({message: "Message received"});
-        }
-    });
+    return res.status(200).send("Message received");
+  });
 
-    // TODO implement this
-    // this route is used to start the consensus algorithm
-    node.get("/start", async (req, res) => {
-        while (!nodesAreReady()) {
-            await delay(5);
-        }
-        if (!nodeState.killed) {
-            nodeState.k = 1;
-            sendmessage("Phase 1",nodeState.x,nodeState.k,N);
-            
-        }
-        res.status(200).json({message: "Algorithm started"});
-    });
+  // GET /start - Start the consensus algorithm
+  node.get("/start", async (req, res) => {
+    if (currentState.killed) {
+      return res.status(400).send("Node is stopped");
+    }
 
-    // this route is used to stop the consensus algorithm
-    node.get("/stop", async (req, res) => {
-        nodeState.killed = true;
-        res.status(200).send("killed");
-    });
+    // Initialize the consensus step (k)
+    console.log(`Node ${nodeId} starting consensus algorithm.`);
+    currentState.k = 1;  // Start consensus from step 1
 
-    // Route to get the current state of the node
-    node.get("/getState", (req, res) => {
-        res.status(200).send(nodeState);
-    });
+    // Broadcast the initial value to all other nodes
+    for (let i = 0; i < N; i++) {
+      if (i !== nodeId) {
+        // Simulate sending the initial value to other nodes
+        // This would typically be an HTTP POST to the /message route of other nodes
+        // For now, simulate the message passing
+        // await sendMessage(i, initialValue);  // Use a function to handle the actual sending of message
+      }
+    }
 
-    // start the server
-    const server = node.listen(BASE_NODE_PORT + nodeId, async () => {
-        console.log(
-            `Node ${nodeId} is listening on port ${BASE_NODE_PORT + nodeId}`
-        );
+    return res.status(200).send("Consensus started");
+  });
 
-        // the node is ready
-        setNodeIsReady(nodeId);
-    });
+  // GET /stop - Stop the consensus algorithm
+  node.get("/stop", async (req, res) => {
+    console.log(`Node ${nodeId} stopping consensus algorithm.`);
+    currentState.killed = true;
+    return res.status(200).send("Consensus stopped");
+  });
 
-    return server;
+  // Start the server
+  const server = node.listen(BASE_NODE_PORT + nodeId, async () => {
+    console.log(`Node ${nodeId} is listening on port ${BASE_NODE_PORT + nodeId}`);
+    setNodeIsReady(nodeId);
+  });
+
+  return server;
 }
