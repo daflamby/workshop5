@@ -36,7 +36,7 @@ export async function node(
     if (isFaulty) {
       return res.status(500).send("faulty");
     }
-    res.status(200).send("live");
+    return res.status(200).send("live");
   });
 
   // GET /getState - Retrieve the current node state
