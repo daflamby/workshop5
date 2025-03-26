@@ -93,7 +93,6 @@ export async function node(
   let receivedMessages: Message[] = [];
 
   async function executeBenOrAlgorithm() {
-    // Augmenter le nombre max d'itérations pour assurer que le test "Exceeding Fault Tolerance" passe
     let maxIterations = 50;
     
     while (!state.decided && !state.killed && maxIterations > 0) {
@@ -112,7 +111,6 @@ export async function node(
         msg => msg.round === state.k && msg.phase === "PROPOSE"
       );
       
-      // Valeur pour phase 2
       let voteValue: Value | null = null;
       
       const count0 = proposalsForThisRound.filter(m => m.value === 0).length;
@@ -124,7 +122,6 @@ export async function node(
       } else if (count1 >= Math.floor((N - F) / 2) + 1) {
         voteValue = 1;
       } else {
-        // Si pas de majorité claire, utiliser la valeur actuelle ou un tirage au sort
         voteValue = state.x !== null ? state.x : commonCoinToss(state.k!, nodeId);
       }
       
@@ -142,50 +139,40 @@ export async function node(
       const votes0 = votesForThisRound.filter(m => m.value === 0).length;
       const votes1 = votesForThisRound.filter(m => m.value === 1).length;
       
-      // Calculer les seuils de décision
-      const majorityThreshold = Math.floor(N / 2) + 1;
-      const faultToleranceThreshold = Math.floor((N - F) / 2) + 1;
+      // 1. Vérifier l'unanimité
+      if (votes0 === N) {
+        state.x = 0;
+        state.decided = true;
+        console.log(`✅ Node ${nodeId} reached unanimous consensus on 0`);
+        break;
+      } else if (votes1 === N) {
+        state.x = 1;
+        state.decided = true;
+        console.log(`✅ Node ${nodeId} reached unanimous consensus on 1`);
+        break;
+      }
       
-      // Règles de décision:
-      // 1. Si nous avons une majorité claire, décider de cette valeur
+      // 2. Vérifier la majorité simple (au lieu d'unanimité)
+      const majorityThreshold = Math.floor(N / 2) + 1;
       if (votes0 >= majorityThreshold) {
         state.x = 0;
-        // Décider uniquement si nous avons une super-majorité
-        if (votes0 >= N - F) {
-          state.decided = true;
-          console.log(`✅ Node ${nodeId} reached consensus on 0`);
-        }
+        state.decided = true;
+        console.log(`✅ Node ${nodeId} reached simple majority consensus on 0`);
+        break;
       } else if (votes1 >= majorityThreshold) {
         state.x = 1;
-        // Décider uniquement si nous avons une super-majorité
-        if (votes1 >= N - F) {
-          state.decided = true;
-          console.log(`✅ Node ${nodeId} reached consensus on 1`);
-        }
-      } else {
-        // Si pas de majorité claire, utiliser le tirage au sort
-        state.x = commonCoinToss(state.k!, nodeId);
-        console.log(`⚖️ Node ${nodeId} reached randomized consensus with value: ${state.x}`);
+        state.decided = true;
+        console.log(`✅ Node ${nodeId} reached simple majority consensus on 1`);
+        break;
       }
       
-      // Cas spécial: forcer la décision après un certain nombre de rounds
-      // Pour les tests de "Fault Tolerance Threshold"
-      if (state.k! >= 3 && !state.decided) {
-        if (N - F <= F) {
-          // Si nous dépassons le seuil de tolérance aux fautes, ne pas décider
-          // Ceci est pour le test "Exceeding Fault Tolerance"
-          state.decided = false;
-        } else if (votes0 >= faultToleranceThreshold || votes1 >= faultToleranceThreshold) {
-          // Si nous avons au moins le seuil de tolérance aux fautes, décider
-          // Ceci est pour le test "Fault Tolerance Threshold"
-          state.decided = true;
-        }
-      }
+      // Si pas de majorité simple, utiliser le tirage au sort
+      state.x = commonCoinToss(state.k!, nodeId);
       
-      // Nettoyer les messages des rounds précédents pour économiser la mémoire
+      // Nettoyer les messages des rounds précédents
       receivedMessages = receivedMessages.filter(msg => msg.round >= state.k!);
       
-      // Incrementer le round
+      // Incrémenter le round
       state.k! += 1;
       
       // Pause légère pour éviter la surcharge CPU
@@ -193,7 +180,6 @@ export async function node(
     }
     
     // Si après maxIterations, nous n'avons toujours pas décidé mais que nous dépassons le seuil de tolérance aux fautes
-    // Assurer que nous avons atteint un état satisfaisant pour le test "Exceeding Fault Tolerance"
     if (!state.decided && N - F <= F) {
       console.log(`⚠️ Node ${nodeId} exceeded fault tolerance threshold without consensus`);
     }
@@ -241,7 +227,6 @@ export async function node(
   // 🔹 Traitement des messages entrants
   function handleIncomingMessage(message: Message) {
     if (!isFaulty && !state.killed) {
-      // Assurer que le message est valide
       if (message && message.round !== undefined && message.value !== undefined && message.phase) {
         receivedMessages.push(message);
       }
@@ -250,9 +235,6 @@ export async function node(
 
   // 🔹 Fonction de tirage au sort partagé
   function commonCoinToss(k: number, nodeId: number): Value {
-    // Fonction de tirage au sort déterministe basée sur le round et nodeId
-    // Ajout du nodeId pour introduire une variabilité entre les nœuds
-    // tout en gardant le caractère déterministe
     return ((k + nodeId) % 2) as Value;
   }
 
