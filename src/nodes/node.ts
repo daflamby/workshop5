@@ -126,4 +126,126 @@ export async function node(
       }
       
       // Phase 2: Vote
-      await broadcastMessage(voteValue
+      await broadcastMessage(voteValue, "VOTE");
+      
+      // Attendre les votes des autres nœuds
+      await new Promise(resolve => setTimeout(resolve, 50));
+      
+      // Compter les votes reçus
+      const votesForThisRound = receivedMessages.filter(
+        msg => msg.round === state.k && msg.phase === "VOTE"
+      );
+      
+      const votes0 = votesForThisRound.filter(m => m.value === 0).length;
+      const votes1 = votesForThisRound.filter(m => m.value === 1).length;
+      
+      // 1. Vérifier l'unanimité
+      if (votes0 === N) {
+        state.x = 0;
+        state.decided = true;
+        console.log(`✅ Node ${nodeId} reached unanimous consensus on 0`);
+        break;
+      } else if (votes1 === N) {
+        state.x = 1;
+        state.decided = true;
+        console.log(`✅ Node ${nodeId} reached unanimous consensus on 1`);
+        break;
+      }
+      
+      // 2. Vérifier la majorité simple (au lieu d'unanimité)
+      const majorityThreshold = Math.floor(N / 2) + 1;
+      if (votes0 >= majorityThreshold) {
+        state.x = 0;
+        state.decided = true;
+        console.log(`✅ Node ${nodeId} reached simple majority consensus on 0`);
+        break;
+      } else if (votes1 >= majorityThreshold) {
+        state.x = 1;
+        state.decided = true;
+        console.log(`✅ Node ${nodeId} reached simple majority consensus on 1`);
+        break;
+      }
+      
+      // Si pas de majorité simple, utiliser le tirage au sort
+      state.x = commonCoinToss(state.k!, nodeId);
+      
+      // Nettoyer les messages des rounds précédents
+      receivedMessages = receivedMessages.filter(msg => msg.round >= state.k!);
+      
+      // Incrémenter le round
+      state.k! += 1;
+      
+      // Pause légère pour éviter la surcharge CPU
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    
+    // Si après maxIterations, nous n'avons toujours pas décidé mais que nous dépassons le seuil de tolérance aux fautes
+    if (!state.decided && N - F <= F) {
+      console.log(`⚠️ Node ${nodeId} exceeded fault tolerance threshold without consensus`);
+    }
+  }
+
+  /** ==========================
+   * 📌 4. Communication entre nœuds
+   * ========================== */
+
+  // 🔹 Envoi de la valeur aux autres nœuds
+  async function broadcastMessage(value: Value, phase: "PROPOSE" | "VOTE") {
+    // Ajouter notre propre message à la liste des messages reçus
+    handleIncomingMessage({
+      sender: nodeId,
+      round: state.k!,
+      value,
+      phase
+    });
+
+    // Envoyer aux autres nœuds
+    const promises = [];
+    for (let i = 0; i < N; i++) {
+      if (i !== nodeId) {
+        promises.push(
+          fetch(`http://localhost:${BASE_NODE_PORT + i}/message`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              sender: nodeId,
+              round: state.k,
+              value,
+              phase
+            }),
+          }).catch(() => {
+            // Ignorer les erreurs de connexion, cela peut être un nœud défaillant
+          })
+        );
+      }
+    }
+    
+    // Attendre que tous les messages soient envoyés, mais avec un timeout
+    await Promise.all(promises);
+  }
+
+  // 🔹 Traitement des messages entrants
+  function handleIncomingMessage(message: Message) {
+    if (!isFaulty && !state.killed) {
+      if (message && message.round !== undefined && message.value !== undefined && message.phase) {
+        receivedMessages.push(message);
+      }
+    }
+  }
+
+  // 🔹 Fonction de tirage au sort partagé
+  function commonCoinToss(k: number, nodeId: number): Value {
+    return ((k + nodeId) % 2) as Value;
+  }
+
+  /** ==========================
+   * 📌 5. Démarrage du serveur
+   * ========================== */
+  const server = node.listen(BASE_NODE_PORT + nodeId, async () => {
+    console.log(`🚀 Node ${nodeId} is listening on port ${BASE_NODE_PORT + nodeId}`);
+    setNodeIsReady(nodeId);
+  });
+
+  return server;
+}
+
